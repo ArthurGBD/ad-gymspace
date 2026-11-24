@@ -21,7 +21,7 @@ jobs:
       - run: npm run build
       - run: npx playwright install --with-deps chromium
       - run: npm run test:e2e
-        env: { CHROME_PATH: '' }
+        env: { CHROME_PATH: "" }
       - run: npm run audit
       - run: npm run scan:secrets
       - uses: actions/upload-artifact@v4
