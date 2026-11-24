@@ -1,0 +1,35 @@
+{
+  "name": "ad-gymspace",
+  "version": "3.0.0",
+  "private": true,
+  "type": "module",
+  "description": "AD GymSpace — registro de treinos offline (A–E), sem backend.",
+  "scripts": {
+    "build": "node scripts/build.mjs",
+    "serve": "node scripts/serve.mjs",
+    "lint": "eslint .",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
+    "typecheck": "tsc -p jsconfig.json",
+    "test": "vitest run",
+    "test:unit": "vitest run tests/unit",
+    "test:integration": "vitest run tests/integration",
+    "test:e2e": "playwright test",
+    "perf": "node scripts/perf.mjs",
+    "scan:secrets": "node scripts/scan-secrets.mjs",
+    "audit": "npm audit --audit-level=high",
+    "verify": "npm run lint && npm run typecheck && npm test && npm run build && npm run test:e2e && npm run scan:secrets"
+  },
+  "devDependencies": {
+    "@axe-core/playwright": "^4.14.0",
+    "@eslint/js": "^10.0.1",
+    "@playwright/test": "^1.65.1",
+    "esbuild": "^0.28.2",
+    "eslint": "^10.15.0",
+    "globals": "^17.14.0",
+    "jsdom": "^31.0.1",
+    "prettier": "^3.10.1",
+    "typescript": "^7.0.2",
+    "vitest": "^5.1.1"
+  }
+}

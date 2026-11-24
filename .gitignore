@@ -1,0 +1,16 @@
+node_modules/
+dist/
+coverage/
+playwright-report/
+test-results/
+.env
+.env.*
+*.log
+# Dados pessoais de treino NUNCA entram no repositório
+private/
+backups/
+adgymspace-backup-*.json
+Treino_*.json
+Treino_*.csv
+indice_sessoes.*
+*.zip
