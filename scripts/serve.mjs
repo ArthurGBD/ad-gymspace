@@ -7,6 +7,10 @@ const types = {
   ".html": "text/html; charset=utf-8",
   ".js": "text/javascript",
   ".css": "text/css",
+  ".jpg": "image/jpeg",
+  ".png": "image/png",
+  ".webp": "image/webp",
+  ".svg": "image/svg+xml",
 };
 createServer(async (req, res) => {
   const path = normalize(new URL(req.url, "http://x").pathname).replace(

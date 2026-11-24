@@ -12,6 +12,9 @@ export function h(tag, attrs, ...children) {
     if (v === undefined || v === null || v === false) continue;
     if (k === "class") el.className = v;
     else if (k === "dataset") Object.assign(el.dataset, v);
+    else if (k === "style" && typeof v === "object")
+      for (const [prop, val] of Object.entries(v))
+        el.style.setProperty(prop, String(val));
     else if (k.startsWith("on") && typeof v === "function")
       el.addEventListener(k.slice(2).toLowerCase(), v);
     else if (k === "value") /** @type {any} */ (el).value = v;
@@ -24,6 +27,7 @@ export function h(tag, attrs, ...children) {
       /** @type {any} */ (el)[k] = Boolean(v);
     else if (
       /^on/i.test(k) ||
+      k === "style" ||
       k === "innerHTML" ||
       k === "outerHTML" ||
       k === "srcdoc"

@@ -14,3 +14,9 @@
 | Lighthouse pós-ajuste final, Firefox/Safari, `file://`, dispositivo real, leitor de tela | Não realizado                                                                                |
 | Cobertura de código em %                                                                 | Não medida                                                                                   |
 | Escalas de desconforto 0–5 vs 0–10                                                       | Ambiguidade documentada, não resolvida                                                       |
+
+## Redesign (3.1.0)
+
+- Sem vídeos demonstrativos; imagens de variantes próximas são indicadas como tal.
+- Instruções gerais, não revisadas por profissional.
+- Componentes de `app.js` não totalmente extraídos; teclado virtual validado só por emulação.

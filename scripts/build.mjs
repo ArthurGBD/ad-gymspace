@@ -31,7 +31,10 @@ await build({
   logLevel: "warning",
 });
 cpSync("public/index.html", "dist/index.html");
-for (const f of readdirSync("dist")) {
+cpSync("public/media", "dist/media", { recursive: true });
+for (const f of readdirSync("dist").filter((n) =>
+  statSync(`dist/${n}`).isFile(),
+)) {
   const b = readFileSync(`dist/${f}`);
   console.log(
     `${f}: ${statSync(`dist/${f}`).size} B (gzip ${gzipSync(b).length} B)`,

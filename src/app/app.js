@@ -24,6 +24,16 @@ import {
 import { draftToSession } from "../domain/session.js";
 import { exerciseSeries, distinctExercises } from "../domain/analytics.js";
 import { suggestNext } from "../domain/progression.js";
+import { getExerciseInfo } from "../domain/exerciseCatalog.js";
+import {
+  estimateMinutes,
+  lastCompleted,
+  plannedSets,
+  uniqueMuscles,
+} from "../domain/plan.js";
+import { loadChart } from "../components/loadChart.js";
+import { exerciseMedia } from "../components/exerciseMedia.js";
+import { exerciseInstructions } from "../components/exerciseInstructions.js";
 import { toAppError, AppError, ERR } from "../services/errors.js";
 import { buildBackup, buildCsv, summaryText } from "../services/exporter.js";
 import { importText } from "../validation/importer.js";
@@ -73,6 +83,8 @@ export function createApp({
   };
   let saveTimer = null;
   let tick = null;
+  /** @type {number|null} segundos restantes de um descanso pausado (não persistido) */
+  let restHold = null;
 
   // ---------- infra ----------
   const main = h("main", { id: "main", tabindex: "-1" });
@@ -83,7 +95,12 @@ export function createApp({
   });
   const bannerEl = h("div", { class: "banner", role: "alert", hidden: true });
   const nav = h("nav", { class: "bottom-nav", "aria-label": "Principal" });
-  root.append(bannerEl, main, nav, toasts);
+  const header = h(
+    "header",
+    { class: "app-header" },
+    h("span", { class: "brand" }, "AD ", h("b", null, "GymSpace")),
+  );
+  root.append(header, bannerEl, main, nav, toasts);
 
   function toast(msg, kind = "ok", code) {
     const t = h(
@@ -264,14 +281,29 @@ export function createApp({
   function renderRest() {
     const el = document.getElementById("rest-box");
     if (!el || !state.draft) return;
-    const rem = restRemaining(state.draft.rest.endsAt, clock());
-    const active = state.draft.rest.endsAt && rem > 0;
-    el.querySelector("[data-rest-time]").textContent = active
-      ? formatDuration(rem)
-      : state.draft.rest.endsAt
-        ? "Descanso concluído"
-        : "—";
-    if (state.draft.rest.endsAt && rem <= 0) {
+    const r = state.draft.rest;
+    const rem = restRemaining(r.endsAt, clock());
+    const active = Boolean(r.endsAt && rem > 0);
+    const timeEl = el.querySelector("[data-rest-time]");
+    const ring = /** @type {any} */ (el.querySelector(".rest-ring"));
+    let progress = 0;
+    if (active) {
+      timeEl.textContent = formatDuration(rem);
+      progress = r.durationS ? 1 - rem / r.durationS : 0;
+      el.dataset.state = "running";
+    } else if (restHold) {
+      timeEl.textContent = formatDuration(restHold);
+      el.dataset.state = "paused";
+    } else {
+      timeEl.textContent = r.endsAt ? "Descanso concluído" : "—";
+      el.dataset.state = r.endsAt ? "done" : "idle";
+    }
+    const toggleBtn = el.querySelector("[data-testid=rest-toggle]");
+    if (toggleBtn)
+      toggleBtn.textContent =
+        el.dataset.state === "paused" ? "Continuar" : "Pausar";
+    ring.style.setProperty("--p", String(Math.min(1, Math.max(0, progress))));
+    if (r.endsAt && rem <= 0) {
       el.dataset.done = "true";
       document.getElementById("rest-live").textContent = "Descanso concluído";
       state.draft = { ...state.draft, rest: { endsAt: null, durationS: 0 } };
@@ -306,6 +338,16 @@ export function createApp({
         oninput: (e) => onInput(e.target.value),
       }),
       hint ? h("small", { class: "hint" }, hint) : null,
+    );
+  }
+
+  function statCard(label, value, note) {
+    return h(
+      "div",
+      { class: "stat" },
+      h("span", { class: "stat-value num" }, value),
+      h("span", { class: "stat-label" }, label),
+      note ? h("span", { class: "stat-note" }, note) : null,
     );
   }
 
@@ -364,24 +406,30 @@ export function createApp({
       );
       return el;
     }
+    const routine = ROUTINES[state.day];
+    const lastAny = lastCompleted(state.sessions);
+    const lastDay = lastCompleted(state.sessions, state.day);
+    const cycleIdx = WORKOUT_CODES.indexOf(suggested) + 1;
     el.append(
       h(
         "p",
-        { class: "muted" },
+        { class: "muted", "data-testid": "home-hint" },
         last
-          ? `Sugestão do sistema: treino ${suggested} (sequência após o último concluído).`
+          ? `Sugestão do sistema: treino ${suggested} (posição ${cycleIdx} de ${WORKOUT_CODES.length} no ciclo).`
           : "Nenhum treino salvo ainda. Escolha um treino para começar.",
       ),
     );
     el.append(
       h(
         "div",
-        { class: "seg", role: "radiogroup", "aria-label": "Treino" },
-        WORKOUT_CODES.map((c) =>
-          h(
+        { class: "workout-list", role: "radiogroup", "aria-label": "Treino" },
+        WORKOUT_CODES.map((c) => {
+          const r = ROUTINES[c];
+          const lc = lastCompleted(state.sessions, c);
+          return h(
             "button",
             {
-              class: "seg-btn",
+              class: "workout-card",
               type: "button",
               role: "radio",
               "aria-checked": String(state.day === c),
@@ -391,27 +439,76 @@ export function createApp({
                 render();
               },
             },
-            c,
-          ),
-        ),
+            h("span", { class: "workout-letter" }, c),
+            h(
+              "span",
+              { class: "workout-body" },
+              h("strong", null, r.title),
+              h(
+                "span",
+                { class: "workout-meta" },
+                `${r.exercises.length} exercícios · ${uniqueMuscles(r.exercises).slice(0, 3).join(", ")}`,
+              ),
+            ),
+            h(
+              "span",
+              { class: `chip${c === suggested ? " chip-accent" : ""}` },
+              c === suggested
+                ? "Sugerido"
+                : lc
+                  ? formatDateBR(lc.date)
+                  : "Sem registro",
+            ),
+          );
+        }),
       ),
     );
     el.append(
       h(
         "div",
-        { class: "card" },
-        h("h2", null, `Treino ${state.day}: ${ROUTINES[state.day].title}`),
+        { class: "card hero", "data-testid": "day-detail" },
+        h("p", { class: "eyebrow" }, `Treino ${state.day}`),
+        h("h2", null, routine.title),
+        h(
+          "div",
+          { class: "stats" },
+          statCard("Exercícios", String(routine.exercises.length)),
+          statCard(
+            "Séries",
+            String(plannedSets(routine.exercises, state.mode)),
+          ),
+          statCard(
+            "Duração",
+            `≈${estimateMinutes(routine.exercises, state.mode)} min`,
+            "estimativa",
+          ),
+        ),
         h(
           "ul",
-          { class: "plain" },
-          ROUTINES[state.day].exercises.map((e) =>
+          { class: "plain plan-list" },
+          routine.exercises.map((e) =>
             h(
               "li",
               null,
-              `${e.label} — ${e.sets}×${e.min}${e.max !== e.min ? `–${e.max}` : ""}${e.metric === "TIME" ? "s" : ""}`,
+              h("span", null, e.label),
+              h(
+                "span",
+                { class: "num" },
+                `${e.sets}×${e.min}${e.max !== e.min ? `–${e.max}` : ""}${e.metric === "TIME" ? "s" : ""}`,
+              ),
             ),
           ),
         ),
+        h(
+          "p",
+          { class: "hint" },
+          lastDay
+            ? `Última sessão do treino ${state.day}: ${formatDateBR(lastDay.date)}.`
+            : lastAny
+              ? `Última sessão registrada: treino ${lastAny.workoutCode}, ${formatDateBR(lastAny.date)}.`
+              : "Sem sessões anteriores.",
+        ),
+        h("p", { class: "hint" }, routine.note),
       ),
     );
     el.append(
@@ -419,7 +516,7 @@ export function createApp({
         "div",
         { class: "seg", role: "radiogroup", "aria-label": "Modo" },
         [
-          [MODE.RETURN, "Retorno após pausa (máx. 2 séries)"],
+          [MODE.RETURN, "Retorno (máx. 2 séries)"],
           [MODE.REFERENCE, "Plano completo"],
         ].map(([m, t]) =>
           h(
@@ -442,15 +539,19 @@ export function createApp({
     );
     el.append(
       h(
-        "button",
-        {
-          class: "btn btn-primary btn-lg",
-          type: "button",
-          "data-testid": "start",
-          onclick: startWorkout,
-        },
-        icon("play"),
-        "Iniciar treino",
+        "div",
+        { class: "action-bar" },
+        h(
+          "button",
+          {
+            class: "btn btn-primary btn-lg",
+            type: "button",
+            "data-testid": "start",
+            onclick: startWorkout,
+          },
+          icon("play"),
+          `Iniciar treino ${state.day}`,
+        ),
       ),
     );
     return el;
@@ -519,29 +620,66 @@ export function createApp({
     const ex = d.exercises[i];
     const counts = setCounts(d.exercises);
     const isTime = ex.metric === "TIME";
-    const el = h("section", { class: "view" });
+    const info = getExerciseInfo(ex.exerciseId);
+    const planned = ROUTINES[d.workoutCode]?.exercises.find(
+      (e) => e.label === ex.label,
+    );
+    const exDone = exerciseProgress(ex).complete;
+    const remainingEx = d.exercises.filter(
+      (e) => !exerciseProgress(e).complete,
+    ).length;
+    const el = h("section", { class: "view exec" });
     el.append(
       h(
         "div",
-        {
-          class: "progress",
-          role: "progressbar",
-          "aria-valuenow": counts.pct,
-          "aria-valuemin": 0,
-          "aria-valuemax": 100,
-          "aria-label": "Progresso do treino",
-        },
-        h("span", { style: `width:${counts.pct}%` }),
+        { class: "exec-top" },
+        h(
+          "div",
+          {
+            class: "progress",
+            role: "progressbar",
+            "aria-valuenow": counts.pct,
+            "aria-valuemin": 0,
+            "aria-valuemax": 100,
+            "aria-label": "Progresso do treino",
+          },
+          h("span", { style: { width: `${counts.pct}%` } }),
+        ),
+        h(
+          "p",
+          { class: "muted num", "data-testid": "exec-progress" },
+          `Exercício ${i + 1} de ${d.exercises.length} · ${counts.done}/${counts.total} séries · faltam ${remainingEx} exercício${remainingEx === 1 ? "" : "s"}`,
+        ),
       ),
     );
     el.append(
       h(
-        "p",
-        { class: "muted" },
-        `Exercício ${i + 1} de ${d.exercises.length} · ${counts.done}/${counts.total} séries`,
+        "header",
+        { class: "ex-head" },
+        h(
+          "div",
+          { class: "chips" },
+          planned ? h("span", { class: "chip" }, planned.muscle) : null,
+          info ? h("span", { class: "chip" }, info.equipment) : null,
+          exDone ? h("span", { class: "chip chip-ok" }, "Concluído") : null,
+        ),
+        h("h1", { "data-testid": "ex-title" }, ex.label),
+        planned
+          ? h(
+              "p",
+              { class: "plan-line num" },
+              `Plano: ${planned.sets} × ${planned.min}${planned.max !== planned.min ? `–${planned.max}` : ""}${isTime ? " s" : " reps"}`,
+            )
+          : null,
       ),
     );
-    el.append(h("h1", { "data-testid": "ex-title" }, ex.label));
+    if (info)
+      el.append(
+        exerciseMedia({
+          media: info.media,
+          variant: info.variant,
+        }),
+      );
     const prev = lastFor(ex.label);
     const sug =
       prev?.target && d.mode !== MODE.RETURN
@@ -551,7 +689,7 @@ export function createApp({
       el.append(
         h(
           "p",
-          { class: "muted", "data-testid": "prev-info" },
+          { class: "prev-info num", "data-testid": "prev-info" },
           `Última vez (${formatDateBR(prev.date)}): ${
             prev.sets
               .filter((s) => s.completed)
@@ -576,60 +714,83 @@ export function createApp({
       el.append(
         h(
           "p",
-          { class: "tag" },
+          { class: "tag tag-warn" },
           "Retorno após pausa: RIR sugerido 2–4 · sem progressão automática",
         ),
       );
 
+    const activeIdx = ex.sets.findIndex((s) => !s.completed);
     ex.sets.forEach((s, j) => {
+      const stateName = s.completed
+        ? "done"
+        : j === activeIdx
+          ? "active"
+          : "pending";
       el.append(
         h(
           "div",
           {
-            class: `set${s.completed ? " done" : ""}`,
+            class: `set set-${stateName}`,
+            "data-state": stateName,
             "data-testid": `set-${j}`,
           },
-          h("span", { class: "set-n" }, `Série ${j + 1}`),
-          isTime
-            ? numInput(
-                "Tempo (s)",
-                s.timeSeconds,
-                (v) =>
-                  setDraft(
-                    updateSet(state.draft, i, j, { timeSeconds: v }, clock()),
-                  ),
-                { testid: `time-${j}`, inputmode: "numeric" },
-              )
-            : [
-                numInput(
-                  "Carga (kg)",
-                  s.loadKg,
-                  (v) =>
-                    setDraft(
-                      updateSet(state.draft, i, j, { loadKg: v }, clock()),
-                    ),
-                  { testid: `load-${j}` },
-                ),
-                numInput(
-                  "Reps",
-                  s.reps,
-                  (v) =>
-                    setDraft(
-                      updateSet(state.draft, i, j, { reps: v }, clock()),
-                    ),
-                  { testid: `reps-${j}` },
-                ),
+          h(
+            "div",
+            { class: "set-head" },
+            h("span", { class: "set-n" }, `Série ${j + 1}`),
+            h(
+              "span",
+              { class: "set-state" },
+              { done: "Concluída", active: "Em execução", pending: "Pendente" }[
+                stateName
               ],
-          numInput(
-            "RIR",
-            s.rir,
-            (v) => setDraft(updateSet(state.draft, i, j, { rir: v }, clock())),
-            { testid: `rir-${j}`, inputmode: "numeric", hint: "0–5" },
+            ),
+          ),
+          h(
+            "div",
+            { class: "set-fields" },
+            isTime
+              ? numInput(
+                  "Tempo (s)",
+                  s.timeSeconds,
+                  (v) =>
+                    setDraft(
+                      updateSet(state.draft, i, j, { timeSeconds: v }, clock()),
+                    ),
+                  { testid: `time-${j}`, inputmode: "numeric" },
+                )
+              : [
+                  numInput(
+                    "Carga (kg)",
+                    s.loadKg,
+                    (v) =>
+                      setDraft(
+                        updateSet(state.draft, i, j, { loadKg: v }, clock()),
+                      ),
+                    { testid: `load-${j}` },
+                  ),
+                  numInput(
+                    "Reps",
+                    s.reps,
+                    (v) =>
+                      setDraft(
+                        updateSet(state.draft, i, j, { reps: v }, clock()),
+                      ),
+                    { testid: `reps-${j}`, inputmode: "numeric" },
+                  ),
+                ],
+            numInput(
+              "RIR (0–5)",
+              s.rir,
+              (v) =>
+                setDraft(updateSet(state.draft, i, j, { rir: v }, clock())),
+              { testid: `rir-${j}`, inputmode: "numeric" },
+            ),
           ),
           h(
             "button",
             {
-              class: "btn check-btn",
+              class: `btn complete-btn${s.completed ? " is-done" : ""}`,
               type: "button",
               "aria-pressed": String(s.completed),
               "aria-label": `Série ${j + 1} concluída`,
@@ -645,6 +806,7 @@ export function createApp({
               },
             },
             icon("check", 24),
+            s.completed ? "Série concluída" : "Concluir série",
           ),
         ),
       );
@@ -656,7 +818,7 @@ export function createApp({
         h(
           "button",
           {
-            class: "btn",
+            class: "btn btn-sm",
             type: "button",
             "data-testid": "add-set",
             onclick: () =>
@@ -671,7 +833,7 @@ export function createApp({
         h(
           "button",
           {
-            class: "btn",
+            class: "btn btn-sm",
             type: "button",
             onclick: () =>
               setDraft(removeLastEmptySet(state.draft, i, clock()), {
@@ -684,71 +846,8 @@ export function createApp({
       ),
     );
 
-    const rest = h(
-      "div",
-      { id: "rest-box", class: "card rest" },
-      h(
-        "div",
-        { class: "row between" },
-        h("strong", null, "Descanso"),
-        h("span", { "data-rest-time": true, class: "rest-time" }, "—"),
-      ),
-      h(
-        "div",
-        { class: "row wrap" },
-        REST_PRESETS.map((sec) =>
-          h(
-            "button",
-            {
-              class: "btn btn-sm",
-              type: "button",
-              onclick: () => startRest(sec),
-            },
-            `${sec}s`,
-          ),
-        ),
-        h(
-          "button",
-          {
-            class: "btn btn-sm",
-            type: "button",
-            onclick: () => {
-              if (state.draft.rest.endsAt)
-                startRest(
-                  Math.max(
-                    0,
-                    Math.round(
-                      restRemaining(state.draft.rest.endsAt, clock()) / 1000,
-                    ),
-                  ) + 15,
-                );
-            },
-          },
-          "+15s",
-        ),
-        h(
-          "button",
-          {
-            class: "btn btn-sm",
-            type: "button",
-            onclick: () => {
-              setDraft(
-                { ...state.draft, rest: { endsAt: null, durationS: 0 } },
-                { immediate: true },
-              );
-              renderRest();
-            },
-          },
-          "Parar",
-        ),
-      ),
-      h("span", {
-        id: "rest-live",
-        class: "sr-only",
-        "aria-live": "assertive",
-      }),
-    );
-    el.append(rest);
+    el.append(restTimerCard());
+    if (info) el.append(exerciseInstructions(info.instructions, info.general));
 
     el.append(
       h(
@@ -796,11 +895,33 @@ export function createApp({
       ),
     );
 
+    el.append(
+      h(
+        "div",
+        { class: "row end" },
+        h(
+          "button",
+          { class: "btn btn-sm", type: "button", onclick: () => pauseToggle() },
+          state.draft.status === STATUS.PAUSED ? "Retomar treino" : "Pausar",
+        ),
+        h(
+          "button",
+          {
+            class: "btn btn-sm btn-danger-outline",
+            type: "button",
+            "data-testid": "restart",
+            onclick: restartWorkout,
+          },
+          "Reiniciar treino",
+        ),
+      ),
+    );
+
     const last = i === d.exercises.length - 1;
     el.append(
       h(
         "div",
-        { class: "row sticky" },
+        { class: "action-bar action-bar-split" },
         h(
           "button",
           {
@@ -808,6 +929,7 @@ export function createApp({
             type: "button",
             disabled: i === 0,
             "data-testid": "prev-ex",
+            "aria-label": "Exercício anterior",
             onclick: () => go(i - 1),
           },
           icon("chevronL"),
@@ -841,30 +963,133 @@ export function createApp({
             ),
       ),
     );
-    el.append(
+    return el;
+  }
+
+  function restTimerCard() {
+    const adjust = (/** @type {number} */ delta) => {
+      const rem = state.draft.rest.endsAt
+        ? restRemaining(state.draft.rest.endsAt, clock())
+        : restHold;
+      if (rem === null || rem === undefined || rem <= 0) return;
+      const next = Math.max(5, rem + delta);
+      if (state.draft.rest.endsAt) startRest(next);
+      else {
+        restHold = next;
+        renderRest();
+      }
+    };
+    const clearRest = () => {
+      restHold = null;
+      setDraft(
+        { ...state.draft, rest: { endsAt: null, durationS: 0 } },
+        { immediate: true },
+      );
+      renderRest();
+    };
+    return h(
+      "div",
+      { id: "rest-box", class: "card rest", "data-state": "idle" },
       h(
         "div",
-        { class: "row end" },
+        { class: "rest-main" },
         h(
-          "button",
-          { class: "btn btn-sm", type: "button", onclick: () => pauseToggle() },
-          state.draft.status === STATUS.PAUSED ? "Retomar treino" : "Pausar",
+          "div",
+          { class: "rest-ring" },
+          h("span", { "data-rest-time": true, class: "rest-time num" }, "—"),
+        ),
+        h(
+          "div",
+          { class: "rest-side" },
+          h("strong", null, "Descanso"),
+          h(
+            "div",
+            { class: "row wrap" },
+            h(
+              "button",
+              {
+                class: "btn btn-sm",
+                type: "button",
+                "data-testid": "rest-minus",
+                "aria-label": "Reduzir 15 segundos",
+                onclick: () => adjust(-15),
+              },
+              "−15s",
+            ),
+            h(
+              "button",
+              {
+                class: "btn btn-sm",
+                type: "button",
+                "data-testid": "rest-toggle",
+                onclick: () => {
+                  if (state.draft.rest.endsAt) {
+                    restHold = Math.max(
+                      0,
+                      restRemaining(state.draft.rest.endsAt, clock()),
+                    );
+                    setDraft(
+                      { ...state.draft, rest: { endsAt: null, durationS: 0 } },
+                      { immediate: true },
+                    );
+                    renderRest();
+                  } else if (restHold) {
+                    const sec = restHold;
+                    restHold = null;
+                    startRest(sec);
+                  }
+                },
+              },
+              "Pausar",
+            ),
+            h(
+              "button",
+              {
+                class: "btn btn-sm",
+                type: "button",
+                "data-testid": "rest-plus",
+                "aria-label": "Adicionar 15 segundos",
+                onclick: () => adjust(15),
+              },
+              "+15s",
+            ),
+          ),
+        ),
+      ),
+      h(
+        "div",
+        { class: "row wrap" },
+        REST_PRESETS.map((sec) =>
+          h(
+            "button",
+            {
+              class: "btn btn-sm",
+              type: "button",
+              onclick: () => {
+                restHold = null;
+                startRest(sec);
+              },
+            },
+            `${sec}s`,
+          ),
         ),
         h(
           "button",
           {
-            class: "btn btn-sm btn-danger-outline",
+            class: "btn btn-sm",
             type: "button",
-            "data-testid": "restart",
-            onclick: restartWorkout,
+            "data-testid": "rest-skip",
+            onclick: clearRest,
           },
-          "Reiniciar treino",
+          "Pular",
         ),
       ),
+      h("span", {
+        id: "rest-live",
+        class: "sr-only",
+        "aria-live": "assertive",
+      }),
     );
-    if (exerciseProgress(ex).complete && !last)
-      el.append(h("p", { class: "ok" }, "Exercício concluído."));
-    return el;
   }
   function go(idx) {
     setDraft({ ...state.draft, currentExercise: idx }, { immediate: true });
@@ -1264,6 +1489,7 @@ export function createApp({
     if (state.evoKey) {
       const [code, ...rest] = state.evoKey.split("|");
       const pts = exerciseSeries(visible, rest.join("|"), code);
+      el.append(loadChart(pts));
       el.append(
         h(
           "table",
@@ -1629,11 +1855,7 @@ export function createApp({
   function init() {
     const t0 = clock();
     const meta = guard("meta.load_failed", () => store.loadMeta()) ?? {};
-    state.theme =
-      meta.theme ??
-      (matchMedia?.("(prefers-color-scheme: light)").matches
-        ? "light"
-        : "dark");
+    state.theme = meta.theme ?? "dark";
     document.documentElement.dataset.theme = state.theme;
     const loaded = guard("data.load_failed", () => store.loadSessions()) ?? {
       sessions: [],
@@ -1668,6 +1890,15 @@ export function createApp({
       if (document.visibilityState === "hidden") flush();
     });
     addEventListener("pagehide", flush);
+    // Mantém o campo focado visível acima do teclado virtual e da barra fixa.
+    addEventListener("focusin", (e) => {
+      const t = /** @type {any} */ (e.target);
+      if (t?.matches?.("input[type=text], select"))
+        setTimeout(
+          () => t.scrollIntoView({ block: "center", behavior: "auto" }),
+          250,
+        );
+    });
     return api;
   }
 
