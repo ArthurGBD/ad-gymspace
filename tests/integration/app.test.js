@@ -30,6 +30,7 @@ const click = (id) => $(id).click();
 
 function completeOneSet() {
   click("day-B");
+  if (!$("start")) click("day-A");
   click("start");
   click("to-exec");
   type($("load-0"), "30,5");
@@ -83,6 +84,8 @@ describe("fluxo de sessão", () => {
     a.app.flush();
     const b = boot(storage); // "reabre"
     expect(b.app.getState().draft.exercises[0].sets[0].reps).toBe("10");
+    expect($("session-banner")).not.toBeNull();
+    click("resume");
     expect($("ex-title")).not.toBeNull();
   });
 
@@ -119,6 +122,7 @@ describe("persistência e falhas", () => {
     const storage = memStorage({ failWrite: true });
     const { app } = boot(storage);
     click("day-A");
+    if (!$("start")) click("day-A");
     click("start");
     app.flush();
     expect(document.querySelector(".banner").hidden).toBe(false);

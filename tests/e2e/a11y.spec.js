@@ -16,6 +16,7 @@ for (const theme of ["dark", "light"]) {
       ).toEqual([]);
     };
     await run("home");
+    await page.getByTestId("day-A").click();
     await page.getByTestId("start").click();
     await run("checkin");
     await page.getByTestId("to-exec").click();

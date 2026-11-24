@@ -41,8 +41,8 @@ for (const [w, h] of SIZES) {
     await expect(t(page, "day-A")).toBeVisible();
     await noHorizontalOverflow(page);
     await page.screenshot({ path: `${OUT}/${w}-home.png` });
+    await t(page, "day-A").click();
     await notBehindNav(page, t(page, "start"));
-
     await t(page, "start").click();
     await page.screenshot({ path: `${OUT}/${w}-checkin.png` });
     await t(page, "check-energy").fill("4");
@@ -74,6 +74,7 @@ for (const [w, h] of SIZES) {
 
 test("alvos de toque da execução ≥ 44px", async ({ page }) => {
   await page.goto("/");
+  if ((await t(page, "start").count()) === 0) await t(page, "day-A").click();
   await t(page, "start").click();
   await t(page, "check-energy").fill("4");
   await t(page, "to-exec").click();
@@ -88,6 +89,7 @@ test("mídia: carrega, expande, alterna posição e mostra a variante", async ({
   page,
 }) => {
   await page.goto("/");
+  if ((await t(page, "start").count()) === 0) await t(page, "day-A").click();
   await t(page, "start").click();
   await t(page, "check-energy").fill("4");
   await t(page, "to-exec").click();
@@ -107,6 +109,7 @@ test("mídia: falha de rede mostra estado informativo, sem imagem quebrada", asy
 }) => {
   await page.route("**/media/exercises/**", (r) => r.abort());
   await page.goto("/");
+  if ((await t(page, "start").count()) === 0) await t(page, "day-A").click();
   await t(page, "start").click();
   await t(page, "check-energy").fill("4");
   await t(page, "to-exec").click();
@@ -122,6 +125,7 @@ test("exercício sem mídia verificada mostra só instruções", async ({
 }) => {
   await page.goto("/");
   await t(page, "day-C").click();
+  if ((await t(page, "start").count()) === 0) await t(page, "day-A").click();
   await t(page, "start").click();
   await t(page, "check-energy").fill("4");
   await t(page, "to-exec").click();
@@ -133,6 +137,7 @@ test("exercício sem mídia verificada mostra só instruções", async ({
 
 test("descanso: pausar, continuar, ajustar e pular", async ({ page }) => {
   await page.goto("/");
+  if ((await t(page, "start").count()) === 0) await t(page, "day-A").click();
   await t(page, "start").click();
   await t(page, "check-energy").fill("4");
   await t(page, "to-exec").click();
