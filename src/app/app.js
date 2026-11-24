@@ -106,12 +106,22 @@ export function createApp({
       code ? h("small", null, ` (${code})`) : null,
     );
     toasts.append(t);
-    setTimeout(() => t.remove(), kind === "error" ? 7000 : 3500);
+    setTimeout(() => t.remove(), kind === "error" ? 15000 : 3500);
   }
   function fail(event, e) {
     const err = toAppError(e);
-    logger.error(event, { code: err.code });
-    toast(err.userMessage, "error", err.code);
+    const fields = Array.isArray(err.details?.fields) ? err.details.fields : [];
+    logger.error(event, {
+      code: err.code,
+      fields: fields.map((f) => String(f).split(":")[0]).slice(0, 10),
+    });
+    toast(
+      fields.length
+        ? `${err.userMessage} Campos: ${fields.slice(0, 4).join("; ")}${fields.length > 4 ? "…" : ""}`
+        : err.userMessage,
+      "error",
+      err.code,
+    );
     return err;
   }
   function showBanner(msg) {
