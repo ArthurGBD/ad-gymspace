@@ -21,7 +21,7 @@ test("fluxo completo: treino → histórico → exportar backup", async ({
   page,
 }) => {
   await expect(
-    page.getByRole("heading", { name: "Treino do dia" }),
+    page.getByRole("heading", { name: "Qual treino vamos fazer hoje?" }),
   ).toBeVisible();
   await t(page, "day-B").click();
   await t(page, "start").click();
@@ -67,16 +67,19 @@ test("fluxo completo: treino → histórico → exportar backup", async ({
 test("reabrir após fechamento inesperado retoma o rascunho; reiniciar preserva histórico", async ({
   page,
 }) => {
+  if ((await t(page, "start").count()) === 0) await t(page, "day-A").click();
   await t(page, "start").click();
   await t(page, "to-exec").click();
   await fillSet(page, 0, "20", "12", "3");
   await page.reload();
+  await t(page, "resume").click();
   await expect(t(page, "load-0")).toHaveValue("20");
   await expect(t(page, "done-0")).toHaveAttribute("aria-pressed", "true");
 
   await t(page, "restart").first().click();
   await t(page, "dlg-ok").click();
-  await expect(t(page, "start")).toBeVisible();
+  await expect(t(page, "day-A")).toBeVisible();
+  await expect(t(page, "session-banner")).toHaveCount(0);
   await t(page, "tab-data").click();
   await expect(t(page, "recover-draft")).toHaveCount(1);
   await t(page, "recover-draft").click();
@@ -102,7 +105,7 @@ test("dados corrompidos não derrubam o app e são preservados", async ({
     localStorage.setItem("adgymspace.v2.draft", "xx");
   });
   await page.reload();
-  await expect(t(page, "start")).toBeVisible();
+  await expect(t(page, "day-A")).toBeVisible();
   await expect(page.locator(".toast").first()).toContainText("AD-STO-002");
   const keys = await page.evaluate(() => Object.keys(localStorage));
   expect(

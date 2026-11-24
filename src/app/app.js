@@ -25,12 +25,7 @@ import { draftToSession } from "../domain/session.js";
 import { exerciseSeries, distinctExercises } from "../domain/analytics.js";
 import { suggestNext } from "../domain/progression.js";
 import { getExerciseInfo } from "../domain/exerciseCatalog.js";
-import {
-  estimateMinutes,
-  lastCompleted,
-  plannedSets,
-  uniqueMuscles,
-} from "../domain/plan.js";
+import { estimateMinutes, lastCompleted, plannedSets } from "../domain/plan.js";
 import { loadChart } from "../components/loadChart.js";
 import { exerciseMedia } from "../components/exerciseMedia.js";
 import { exerciseInstructions } from "../components/exerciseInstructions.js";
@@ -73,6 +68,7 @@ export function createApp({
     draft: null,
     sessions: [],
     day: "A",
+    selectedPreview: null,
     mode: MODE.RETURN,
     date: "",
     historyLimit: PAGE,
@@ -205,6 +201,17 @@ export function createApp({
   }
 
   function startWorkout() {
+    if (!state.selectedPreview) {
+      toast("Escolha um treino antes de iniciar.", "warn");
+      return;
+    }
+    if (state.draft) {
+      toast(
+        "Há um treino em andamento. Retome ou reinicie antes de iniciar outro.",
+        "warn",
+      );
+      return;
+    }
     const d = transition(
       createDraft({
         day: state.day,
@@ -354,24 +361,65 @@ export function createApp({
   function viewHome() {
     const resumable = state.draft;
     const suggested = suggestNextWorkout(state.sessions);
-    const last = state.sessions.filter(
+    const completed = state.sessions.filter(
       (s) => !s.deletedAt && s.status === "COMPLETED",
     ).length;
-    const el = h("section", { class: "view" }, h("h1", null, "Treino do dia"));
-    if (resumable) {
-      el.append(
+    const latest = lastCompleted(state.sessions);
+    const el = h("section", {
+      class: "view home-view",
+      "data-testid": "home-view",
+    });
+
+    el.append(
+      h(
+        "div",
+        { class: "home-welcome" },
+        h("p", { class: "eyebrow" }, "Treino do dia"),
+        h("h1", null, "Qual treino vamos fazer hoje?"),
+        h(
+          "p",
+          { class: "muted home-intro-text", "data-testid": "home-hint" },
+          "Escolha sua rotina, confira cada exercício e comece quando estiver pronto.",
+        ),
         h(
           "div",
-          { class: "card accent" },
-          h("h2", null, `Treino ${resumable.workoutCode} em andamento`),
+          { class: "home-overview" },
           h(
-            "p",
-            null,
-            `${setCounts(resumable.exercises).done}/${setCounts(resumable.exercises).total} séries registradas`,
+            "span",
+            { class: "overview-pill" },
+            `${completed} treinos concluídos`,
+          ),
+          h(
+            "span",
+            { class: "overview-pill" },
+            latest
+              ? `Última sessão: ${latest.workoutCode} · ${formatDateBR(latest.date)}`
+              : "Seu próximo treino começa aqui",
+          ),
+        ),
+      ),
+    );
+
+    if (resumable) {
+      const counts = setCounts(resumable.exercises);
+      el.append(
+        h(
+          "aside",
+          { class: "session-banner", "data-testid": "session-banner" },
+          h(
+            "div",
+            { class: "session-banner-info" },
+            h("p", { class: "eyebrow" }, "Sessão em andamento"),
+            h("h2", null, `Treino ${resumable.workoutCode} pode ser retomado`),
+            h(
+              "p",
+              { class: "muted" },
+              `${counts.done}/${counts.total} séries registradas. Você pode ver outros treinos sem perder esta sessão.`,
+            ),
           ),
           h(
             "div",
-            { class: "row" },
+            { class: "session-banner-actions" },
             h(
               "button",
               {
@@ -380,15 +428,16 @@ export function createApp({
                 "data-testid": "resume",
                 onclick: () => {
                   state.view =
-                    resumable.currentExercise >= 0 &&
-                    resumable.check.energy !== ""
+                    resumable.check.energy !== "" ||
+                    resumable.currentExercise > 0 ||
+                    hasProgress(resumable)
                       ? "exec"
                       : "checkin";
                   render();
                 },
               },
               icon("play"),
-              "Retomar",
+              "Continuar treino",
             ),
             h(
               "button",
@@ -399,106 +448,183 @@ export function createApp({
                 onclick: restartWorkout,
               },
               icon("restart"),
-              "Reiniciar",
+              "Reiniciar treino",
+            ),
+          ),
+        ),
+      );
+    }
+
+    el.append(
+      h(
+        "div",
+        { class: "section-heading" },
+        h(
+          "div",
+          null,
+          h("p", { class: "eyebrow" }, "Minhas rotinas"),
+          h(
+            "h2",
+            { "data-testid": "workout-selector-title" },
+            "Selecione um treino",
+          ),
+        ),
+        h("span", { class: "section-count" }, "5 opções"),
+      ),
+    );
+
+    const list = h("div", {
+      class: "workout-list",
+      role: "group",
+      "aria-label": "Treinos disponíveis A a E",
+      "data-testid": "workout-selector",
+    });
+    for (const code of WORKOUT_CODES) {
+      const routine = ROUTINES[code];
+      const history = lastCompleted(state.sessions, code);
+      const cover = getExerciseInfo(routine.exercises[0].id)?.media
+        ?.images?.[0];
+      const isSelected = state.selectedPreview === code;
+      list.append(
+        h(
+          "button",
+          {
+            class: `workout-choice${isSelected ? " is-selected" : ""}`,
+            type: "button",
+            "aria-pressed": String(isSelected),
+            "aria-label": `Ver treino ${code}: ${routine.title}`,
+            "data-testid": `day-${code}`,
+            onclick: () => {
+              state.day = code;
+              state.selectedPreview = code;
+              render();
+              main.querySelector("#selected-workout")?.scrollIntoView?.({
+                behavior: "smooth",
+                block: "start",
+              });
+            },
+          },
+          h(
+            "span",
+            { class: "choice-art", "aria-hidden": "true" },
+            cover
+              ? h("img", {
+                  src: cover,
+                  alt: "",
+                  loading: "lazy",
+                  decoding: "async",
+                  onerror: (ev) => {
+                    ev.currentTarget.hidden = true;
+                  },
+                })
+              : null,
+            h("span", { class: "choice-letter" }, code),
+          ),
+          h(
+            "span",
+            { class: "workout-body" },
+            h("span", { class: "choice-overline" }, `TREINO ${code}`),
+            h("strong", { class: "choice-title" }, routine.title),
+            h(
+              "span",
+              { class: "choice-description" },
+              `${routine.exercises.length} exercícios · ${plannedSets(routine.exercises, state.mode)} séries`,
+            ),
+            h(
+              "span",
+              { class: "choice-history" },
+              history
+                ? `Último: ${formatDateBR(history.date)}`
+                : "Ainda não realizado",
+            ),
+          ),
+          h(
+            "span",
+            { class: "choice-action" },
+            code === suggested
+              ? h("span", { class: "suggestion-mark" }, "Sugestão")
+              : null,
+            h("span", { class: "choice-arrow", "aria-hidden": "true" }, "›"),
+          ),
+        ),
+      );
+    }
+    el.append(list);
+    el.append(
+      h(
+        "p",
+        { class: "hint" },
+        `Sugestão de sequência: treino ${suggested}. Você decide qual rotina realizar; nenhuma sessão começa automaticamente.`,
+      ),
+    );
+
+    if (!state.selectedPreview) {
+      el.append(
+        h(
+          "div",
+          {
+            class: "preview-placeholder",
+            "data-testid": "preview-placeholder",
+          },
+          h(
+            "span",
+            { class: "preview-placeholder-icon", "aria-hidden": "true" },
+            "↗",
+          ),
+          h(
+            "div",
+            null,
+            h("strong", null, "Escolha o treino acima para ver os exercícios"),
+            h(
+              "p",
+              { class: "muted" },
+              "Você poderá conferir a execução e as séries antes de começar.",
             ),
           ),
         ),
       );
       return el;
     }
-    const routine = ROUTINES[state.day];
-    const lastAny = lastCompleted(state.sessions);
-    const lastDay = lastCompleted(state.sessions, state.day);
-    const cycleIdx = WORKOUT_CODES.indexOf(suggested) + 1;
+
+    const code = state.selectedPreview;
+    const routine = ROUTINES[code];
+    const lastDay = lastCompleted(state.sessions, code);
     el.append(
       h(
-        "p",
-        { class: "muted", "data-testid": "home-hint" },
-        last
-          ? `Sugestão do sistema: treino ${suggested} (posição ${cycleIdx} de ${WORKOUT_CODES.length} no ciclo).`
-          : "Nenhum treino salvo ainda. Escolha um treino para começar.",
-      ),
-    );
-    el.append(
-      h(
-        "div",
-        { class: "workout-list", role: "radiogroup", "aria-label": "Treino" },
-        WORKOUT_CODES.map((c) => {
-          const r = ROUTINES[c];
-          const lc = lastCompleted(state.sessions, c);
-          return h(
-            "button",
-            {
-              class: "workout-card",
-              type: "button",
-              role: "radio",
-              "aria-checked": String(state.day === c),
-              "data-testid": `day-${c}`,
-              onclick: () => {
-                state.day = c;
-                render();
-              },
-            },
-            h("span", { class: "workout-letter" }, c),
-            h(
-              "span",
-              { class: "workout-body" },
-              h("strong", null, r.title),
-              h(
-                "span",
-                { class: "workout-meta" },
-                `${r.exercises.length} exercícios · ${uniqueMuscles(r.exercises).slice(0, 3).join(", ")}`,
-              ),
-            ),
-            h(
-              "span",
-              { class: `chip${c === suggested ? " chip-accent" : ""}` },
-              c === suggested
-                ? "Sugerido"
-                : lc
-                  ? formatDateBR(lc.date)
-                  : "Sem registro",
-            ),
-          );
-        }),
-      ),
-    );
-    el.append(h("p", { class: "eyebrow" }, "Modo do treino"));
-    el.append(
-      h(
-        "div",
-        { class: "seg", role: "radiogroup", "aria-label": "Modo do treino" },
-        [
-          [MODE.RETURN, "Voltando após pausa (máx. 2 séries)"],
-          [MODE.REFERENCE, "Plano completo"],
-        ].map(([m, t]) =>
+        "section",
+        {
+          id: "selected-workout",
+          class: "workout-preview",
+          "data-testid": "day-detail",
+          "aria-label": `Prévia do treino ${code}`,
+        },
+        h(
+          "div",
+          { class: "preview-header" },
+          h(
+            "div",
+            null,
+            h("p", { class: "eyebrow" }, `Prévia · Treino ${code}`),
+            h("h2", null, routine.title),
+            h("p", { class: "muted" }, routine.note),
+          ),
           h(
             "button",
             {
-              class: "seg-btn",
+              class: "btn btn-sm",
               type: "button",
-              role: "radio",
-              "aria-checked": String(state.mode === m),
-              "data-testid": `mode-${m}`,
+              "data-testid": "close-preview",
               onclick: () => {
-                state.mode = m;
+                state.selectedPreview = null;
                 render();
               },
             },
-            t,
+            "Fechar",
           ),
         ),
-      ),
-    );
-    el.append(
-      h(
-        "div",
-        { class: "card hero", "data-testid": "day-detail" },
-        h("p", { class: "eyebrow" }, `Treino ${state.day}`),
-        h("h2", null, routine.title),
         h(
           "div",
-          { class: "stats" },
+          { class: "stats preview-stats" },
           statCard("Exercícios", String(routine.exercises.length)),
           statCard(
             "Séries",
@@ -511,47 +637,147 @@ export function createApp({
           ),
         ),
         h(
-          "ul",
-          { class: "plain plan-list" },
-          routine.exercises.map((e) =>
-            h(
-              "li",
-              null,
-              h("span", null, e.label),
+          "div",
+          { class: "mode-field" },
+          h("h3", null, "Como quer treinar?"),
+          h(
+            "div",
+            { class: "seg", role: "group", "aria-label": "Modo do treino" },
+            [
+              [MODE.RETURN, "Voltando após pausa (máx. 2 séries)"],
+              [MODE.REFERENCE, "Plano completo"],
+            ].map(([m, label]) =>
               h(
-                "span",
-                { class: "num" },
-                `${e.sets}×${e.min}${e.max !== e.min ? `–${e.max}` : ""}${e.metric === "TIME" ? "s" : ""}`,
+                "button",
+                {
+                  class: "seg-btn",
+                  type: "button",
+                  "aria-pressed": String(state.mode === m),
+                  "aria-checked": String(state.mode === m),
+                  "data-testid": `mode-${m}`,
+                  onclick: () => {
+                    state.mode = m;
+                    render();
+                  },
+                },
+                label,
               ),
             ),
           ),
         ),
         h(
+          "div",
+          { class: "section-heading" },
+          h("h3", null, "Exercícios deste treino"),
+          h(
+            "span",
+            { class: "section-count" },
+            `${routine.exercises.length} exercícios`,
+          ),
+        ),
+        h(
+          "ol",
+          { class: "exercise-preview-list" },
+          routine.exercises.map((ex, index) => {
+            const info = getExerciseInfo(ex.id);
+            const image = info?.media?.images?.[0];
+            const target = `${ex.sets} séries · ${ex.min}${ex.max !== ex.min ? `–${ex.max}` : ""}${ex.metric === "TIME" ? " segundos" : " repetições"}`;
+            return h(
+              "li",
+              { class: "exercise-preview-item" },
+              h(
+                "div",
+                { class: "exercise-preview-row" },
+                h(
+                  "span",
+                  { class: "exercise-preview-image", "aria-hidden": "true" },
+                  image
+                    ? h("img", {
+                        src: image,
+                        alt: "",
+                        loading: "lazy",
+                        decoding: "async",
+                        onerror: (ev) => {
+                          ev.currentTarget.hidden = true;
+                        },
+                      })
+                    : h("span", null, "AD"),
+                ),
+                h(
+                  "div",
+                  { class: "exercise-preview-content" },
+                  h(
+                    "span",
+                    { class: "exercise-counter" },
+                    `EXERCÍCIO ${index + 1}`,
+                  ),
+                  h("strong", null, ex.label),
+                  h("span", { class: "muted" }, target),
+                  info
+                    ? h(
+                        "span",
+                        { class: "exercise-meta" },
+                        `${info.equipment}${info.media?.match === "similar" ? " · Imagem de variante próxima" : ""}`,
+                      )
+                    : null,
+                ),
+              ),
+              info
+                ? h(
+                    "details",
+                    { class: "exercise-preview-help" },
+                    h("summary", null, "Ver instruções e cuidados"),
+                    h(
+                      "div",
+                      { class: "exercise-preview-help-content" },
+                      h("strong", null, "Preparação"),
+                      h("p", null, info.instructions.prep.join(" ")),
+                      h("strong", null, "Execução"),
+                      h("p", null, info.instructions.exec.join(" ")),
+                      h("strong", null, "Evite"),
+                      h("p", null, info.instructions.mistakes.join(" ")),
+                      info.general
+                        ? h("small", { class: "hint" }, info.general)
+                        : null,
+                    ),
+                  )
+                : h(
+                    "p",
+                    { class: "hint" },
+                    "Instruções disponíveis durante a execução.",
+                  ),
+            );
+          }),
+        ),
+        h(
           "p",
           { class: "hint" },
           lastDay
-            ? `Última sessão do treino ${state.day}: ${formatDateBR(lastDay.date)}.`
-            : lastAny
-              ? `Última sessão registrada: treino ${lastAny.workoutCode}, ${formatDateBR(lastAny.date)}.`
-              : "Sem sessões anteriores.",
+            ? `Última sessão do treino ${code}: ${formatDateBR(lastDay.date)}.`
+            : "Sem sessão anterior deste treino.",
         ),
-        h("p", { class: "hint" }, routine.note),
-      ),
-    );
-    el.append(
-      h(
-        "div",
-        { class: "action-bar" },
         h(
-          "button",
-          {
-            class: "btn btn-primary btn-lg",
-            type: "button",
-            "data-testid": "start",
-            onclick: startWorkout,
-          },
-          icon("play"),
-          `Iniciar treino ${state.day}`,
+          "p",
+          { class: "hint" },
+          "Imagens demonstrativas do catálogo local. Vídeos ainda não possuem fontes verificadas; não exibimos reproduções fictícias.",
+        ),
+        h(
+          "div",
+          { class: "action-bar preview-actions" },
+          h(
+            "button",
+            {
+              class: "btn btn-primary btn-lg",
+              type: "button",
+              disabled: Boolean(resumable),
+              "data-testid": "start",
+              onclick: startWorkout,
+            },
+            icon("play"),
+            resumable
+              ? "Conclua ou reinicie a sessão atual"
+              : `Iniciar treino ${code}`,
+          ),
         ),
       ),
     );
@@ -1838,6 +2064,7 @@ export function createApp({
             "data-testid": `tab-${t}`,
             onclick: () => {
               state.tab = t;
+              if (t === "today") state.view = "home";
               render();
               main.focus();
             },
@@ -1874,12 +2101,7 @@ export function createApp({
     ) {
       state.draft = dr.value;
       logger.info("draft.recovered_on_open");
-      state.view =
-        state.draft.check.energy !== "" ||
-        state.draft.currentExercise > 0 ||
-        hasProgress(state.draft)
-          ? "exec"
-          : "checkin";
+      state.view = "home";
     }
     state.day = suggestNextWorkout(state.sessions);
     render();
