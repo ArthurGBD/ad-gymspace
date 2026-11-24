@@ -34,6 +34,7 @@ describe("estado do treino", () => {
     expect(canTransition(STATUS.NOT_STARTED, STATUS.IN_PROGRESS)).toBe(true);
     expect(canTransition(STATUS.COMPLETED, STATUS.IN_PROGRESS)).toBe(false);
     expect(canTransition(STATUS.CANCELLED, STATUS.PAUSED)).toBe(false);
+    expect(canTransition(STATUS.PAUSED, STATUS.COMPLETED)).toBe(true);
     const d = createDraft({ day: "A", nowMs: T0 });
     expect(() => transition(d, STATUS.COMPLETED, T0)).toThrow(/permitida/);
   });
