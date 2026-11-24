@@ -463,6 +463,33 @@ export function createApp({
         }),
       ),
     );
+    el.append(h("p", { class: "eyebrow" }, "Modo do treino"));
+    el.append(
+      h(
+        "div",
+        { class: "seg", role: "radiogroup", "aria-label": "Modo do treino" },
+        [
+          [MODE.RETURN, "Voltando após pausa (máx. 2 séries)"],
+          [MODE.REFERENCE, "Plano completo"],
+        ].map(([m, t]) =>
+          h(
+            "button",
+            {
+              class: "seg-btn",
+              type: "button",
+              role: "radio",
+              "aria-checked": String(state.mode === m),
+              "data-testid": `mode-${m}`,
+              onclick: () => {
+                state.mode = m;
+                render();
+              },
+            },
+            t,
+          ),
+        ),
+      ),
+    );
     el.append(
       h(
         "div",
@@ -509,32 +536,6 @@ export function createApp({
               : "Sem sessões anteriores.",
         ),
         h("p", { class: "hint" }, routine.note),
-      ),
-    );
-    el.append(
-      h(
-        "div",
-        { class: "seg", role: "radiogroup", "aria-label": "Modo" },
-        [
-          [MODE.RETURN, "Retorno (máx. 2 séries)"],
-          [MODE.REFERENCE, "Plano completo"],
-        ].map(([m, t]) =>
-          h(
-            "button",
-            {
-              class: "seg-btn",
-              type: "button",
-              role: "radio",
-              "aria-checked": String(state.mode === m),
-              "data-testid": `mode-${m}`,
-              onclick: () => {
-                state.mode = m;
-                render();
-              },
-            },
-            t,
-          ),
-        ),
       ),
     );
     el.append(
