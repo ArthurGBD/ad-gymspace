@@ -110,7 +110,8 @@ export function createApp({
   }
   function fail(event, e) {
     const err = toAppError(e);
-    const fields = Array.isArray(err.details?.fields) ? err.details.fields : [];
+    const details = /** @type {any} */ (err.details);
+    const fields = Array.isArray(details?.fields) ? details.fields : [];
     logger.error(event, {
       code: err.code,
       fields: fields.map((f) => String(f).split(":")[0]).slice(0, 10),
